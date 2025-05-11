@@ -18,14 +18,15 @@ MDCGEN_API string_view_t mdcgen_write(const_string_view_t code, string_view_t me
 MDCGEN_API string_view_t mdcgen_Generic_struct_begin(const_string_view_t name, const const_string_view_t *generic_args, size_t generic_args_count, string_view_t memory);
 MDCGEN_API string_view_t mdcgen_Generic_struct_match(const_string_view_t struct_tag, const const_string_view_t *generic_args, size_t generic_args_count, const const_string_view_t *type_args, size_t type_args_count, string_view_t memory);
 MDCGEN_API string_view_t mdcgen_Generic_struct_end(string_view_t memory);
-
 MDCGEN_API string_view_t mdcgen_Generic_func_begin(const_string_view_t name, string_view_t memory);
 MDCGEN_API string_view_t mdcgen_Generic_func_match(const_string_view_t func_name, const const_string_view_t *generic_args, size_t generic_args_count, string_view_t memory);
 MDCGEN_API string_view_t mdcgen_Generic_func_end(string_view_t memory);
 
+// TODO: This approach results in combinatorial explosion when using multiple generic arguments.
 MDCGEN_API struct mdc_string_view mdcgen_compile_generic_structs(const_string_view_t generic_struct,
     const const_string_view_t *generic_args, ssize_t generic_args_count,
     const const_string_view_t *type_args, ssize_t type_args_count, string_view_t memory);
+// TODO: This approach results in combinatorial explosion when using multiple generic arguments.
 MDCGEN_API struct mdc_string_view mdcgen_compile_generic_funcs(const_string_view_t generic_func,
     const const_string_view_t *generic_args, ssize_t generic_args_count,
     const const_string_view_t *type_args, ssize_t type_args_count, string_view_t memory);
