@@ -8,23 +8,27 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-MDCGEN_API bool mdcgen_is_struct_definition(const_string_view_t str);
 MDCGEN_API const_string_view_t mdcgen_get_struct_tag(struct mdc_const_string_view struct_definition);
+MDCGEN_API const_string_view_t mdcgen_get_func_name(struct mdc_const_string_view func);
 MDCGEN_API struct mdc_string_view mdcgen_identifier_safe_typename(struct mdc_const_string_view generic, struct mdc_string_view memory);
-MDCGEN_API struct mdc_string_view mdcgen_compile_generic_struct(struct mdc_const_string_view generic_struct, struct mdc_const_string_view generic_arg, struct mdc_string_view memory);
+MDCGEN_API struct mdc_string_view mdcgen_compile_generic_struct(struct mdc_const_string_view generic_struct, struct mdc_const_string_view generic_arg, struct mdc_const_string_view type_arg, struct mdc_string_view memory);
 MDCGEN_API string_view_t mdcgen_header_guard_begin(const_string_view_t name, string_view_t memory);
 MDCGEN_API string_view_t mdcgen_header_guard_end(const_string_view_t name, string_view_t memory);
 MDCGEN_API string_view_t mdcgen_write(const_string_view_t code, string_view_t memory);
-MDCGEN_API string_view_t mdcgen_Generic_struct_begin(const_string_view_t name, string_view_t memory);
-MDCGEN_API string_view_t mdcgen_Generic_struct_match(const_string_view_t struct_tag, const const_string_view_t *generic_args, size_t generic_args_count, string_view_t memory);
+MDCGEN_API string_view_t mdcgen_Generic_struct_begin(const_string_view_t name, const const_string_view_t *generic_args, size_t generic_args_count, string_view_t memory);
+MDCGEN_API string_view_t mdcgen_Generic_struct_match(const_string_view_t struct_tag, const const_string_view_t *generic_args, size_t generic_args_count, const const_string_view_t *type_args, size_t type_args_count, string_view_t memory);
 MDCGEN_API string_view_t mdcgen_Generic_struct_end(string_view_t memory);
 
 MDCGEN_API string_view_t mdcgen_Generic_func_begin(const_string_view_t name, string_view_t memory);
 MDCGEN_API string_view_t mdcgen_Generic_func_match(const_string_view_t func_name, const const_string_view_t *generic_args, size_t generic_args_count, string_view_t memory);
 MDCGEN_API string_view_t mdcgen_Generic_func_end(string_view_t memory);
 
-MDCGEN_API struct mdc_string_view mdcgen_compile_generic_structs(const_string_view_t generic_struct, const const_string_view_t *generic_args, ssize_t generic_args_count, string_view_t memory);
-MDCGEN_API struct mdc_string_view mdcgen_compile_generic_funcs(const_string_view_t generic_func, const const_string_view_t *generic_args, ssize_t generic_args_count, string_view_t memory);
+MDCGEN_API struct mdc_string_view mdcgen_compile_generic_structs(const_string_view_t generic_struct,
+    const const_string_view_t *generic_args, ssize_t generic_args_count,
+    const const_string_view_t *type_args, ssize_t type_args_count, string_view_t memory);
+MDCGEN_API struct mdc_string_view mdcgen_compile_generic_funcs(const_string_view_t generic_func,
+    const const_string_view_t *generic_args, ssize_t generic_args_count,
+    const const_string_view_t *type_args, ssize_t type_args_count, string_view_t memory);
 
 #if defined(MDC_CODE_GEN_IMPLEMENTATION)
 
@@ -33,6 +37,9 @@ MDCGEN_API struct mdc_string_view mdcgen_compile_generic_funcs(const_string_view
 #endif
 
 #define MDC_STRINGIFY(X) #X
+
+#define MDCGEN_BUFFER_SIZE (1 << 15)
+#define MDCGEN_NEW_BUFFER() SV_BUFFER(MDCGEN_BUFFER_SIZE)
 
 static struct mdc_string_view mdc_read_file_to_string_view(const char *path, const struct mdc_string_view memory) {
     FILE *file = fopen(path, "r");
@@ -50,12 +57,6 @@ static struct mdc_string_view mdc_read_file_to_string_view(const char *path, con
     }
     fclose(file);
     return memory;
-}
-
-bool mdcgen_is_struct_definition(const const_string_view_t str) {
-    return mdc_sv_index_of(str, SV("struct")) >= 0
-        && mdc_sv_index_of(str, SV("{")) >= 0
-        && mdc_sv_index_of(str, SV("}")) >= 0;
 }
 
 const_string_view_t mdcgen_get_struct_tag(const struct mdc_const_string_view struct_definition) {
@@ -96,7 +97,7 @@ struct mdc_string_view mdcgen_identifier_safe_typename(const struct mdc_const_st
 }
 
 string_view_t mdcgen_write(const const_string_view_t code, const string_view_t memory) {
-    return mdc_sv_format("%.*s\n", memory, code.length, code.data);
+    return mdc_sv_format("%.*s", memory, code.length, code.data);
 }
 
 string_view_t mdcgen_header_guard_begin(const const_string_view_t name, const string_view_t memory) {
@@ -115,36 +116,78 @@ string_view_t mdcgen_header_guard_end(const const_string_view_t name, const stri
     );
 }
 
-string_view_t mdcgen_Generic_struct_begin(const const_string_view_t name, const string_view_t memory) {
-    return mdc_sv_format("#define %.*s(T) typeof(_Generic( (*((T*)NULL)) \\\n",
-        mdc_sv_slice(memory, 0, memory.length),
-        (int) name.length, name.data
-    );
-}
-
-string_view_t mdcgen_Generic_struct_match(const const_string_view_t struct_tag, const const_string_view_t *generic_args, const size_t generic_args_count, const string_view_t memory) {
+string_view_t mdcgen_Generic_struct_begin(const const_string_view_t name, const const_string_view_t *generic_args, const size_t generic_args_count, const string_view_t memory) {
     ssize_t written = 0;
+    written += mdc_sv_format("#define %.*s(", sv_slice(memory, 0, memory.length), (int) name.length, name.data).length;
     for (ssize_t i = 0; i < generic_args_count; i++) {
         const const_string_view_t generic_arg = generic_args[i];
-        const const_string_view_t id_safe_arg = mdcgen_identifier_safe_typename(generic_arg, SV_BUFFER(4096)).as_const;
-        written += mdc_sv_format(
-            ",   %.*s: (*(struct %.*s_%.*s *)NULL)\\\n",
-            mdc_sv_slice(memory, written, memory.length),
-            (int) generic_arg.length, generic_arg.data,
-            (int) struct_tag.length, struct_tag.data,
-            (int) id_safe_arg.length, id_safe_arg.data
-        ).length;
+        written += mdc_sv_format("%.*s", sv_slice(memory, written, memory.length), (int) generic_arg.length, generic_arg.data).length;
+        if (i < generic_args_count - 1) {
+            written += mdc_sv_format(", ", sv_slice(memory, written, memory.length)).length;
+        }
     }
+    written += mdc_sv_format(") typeof(\\\n", sv_slice(memory, written, memory.length)).length;
     return sv_slice(memory, 0, written);
 }
 
+static string_view_t mdcgen_Generic_struct_match_recurse(const const_string_view_t struct_tag,
+    const const_string_view_t *generic_args, const size_t generic_args_count,
+    const const_string_view_t *type_args, const size_t type_args_count,
+    const const_string_view_t current_name,
+    const string_view_t memory) {
+    if (generic_args_count == 1) {
+        ssize_t written = 0;
+        written += mdc_sv_format("_Generic( (*((%.*s*)NULL)) \\\n", sv_slice(memory, written, memory.length),
+            (int) generic_args->length, generic_args->data
+        ).length;
+        for (ssize_t j = 0; j < type_args_count; j++) {
+            const const_string_view_t type_arg = type_args[j];
+            const const_string_view_t id_safe_arg = mdcgen_identifier_safe_typename(
+                mdc_sv_format("%.*s_%.*s", sv_slice(memory, written, memory.length), (int) current_name.length, current_name.data, (int) type_arg.length, type_arg.data).as_const
+            , MDCGEN_NEW_BUFFER()).as_const;
+            written += mdc_sv_format(
+                ",   %.*s: (*(struct %.*s%.*s *)NULL)\\\n",
+                sv_slice(memory, written, memory.length),
+                (int) type_arg.length, type_arg.data,
+                (int) struct_tag.length, struct_tag.data,
+                (int) id_safe_arg.length, id_safe_arg.data
+            ).length;
+        }
+        return sv_slice(memory, 0, written);
+    }
+
+    const const_string_view_t generic_arg = generic_args[generic_args_count - 1];
+    ssize_t written = 0;
+    written += mdc_sv_format("_Generic( (*((%.*s*)NULL)) \\\n", sv_slice(memory, written, memory.length),
+        (int) generic_arg.length, generic_arg.data
+    ).length;
+
+    for (ssize_t i = 0; i < type_args_count; i++) {
+        const const_string_view_t type_arg = type_args[i];
+        const const_string_view_t id_safe_arg = mdcgen_identifier_safe_typename(
+            mdc_sv_format("%.*s_%.*s", sv_slice(memory, written, memory.length), (int) current_name.length, current_name.data, (int) type_arg.length, type_arg.data).as_const
+        , MDCGEN_NEW_BUFFER()).as_const;
+        written += mdc_sv_format(", %.*s: ", sv_slice(memory, written, memory.length), (int) type_arg.length, type_arg.data).length;
+        written += mdcgen_Generic_struct_match_recurse(struct_tag, generic_args, generic_args_count - 1, type_args, type_args_count, id_safe_arg, sv_slice(memory, written, memory.length)).length;
+        written += mdc_sv_format(")\\\n", sv_slice(memory, written, memory.length)).length;
+    }
+    return sv_slice(memory, 0, written);
+}
+string_view_t mdcgen_Generic_struct_match(const const_string_view_t struct_tag,
+    const const_string_view_t *generic_args, const size_t generic_args_count,
+    const const_string_view_t *type_args, const size_t type_args_count, const string_view_t memory) {
+    return mdcgen_Generic_struct_match_recurse(struct_tag, generic_args, generic_args_count, type_args, type_args_count, SV(""), memory);
+}
+
 string_view_t mdcgen_Generic_struct_end(const string_view_t memory) {
-    return mdcgen_write(SV("))"), memory);
+    ssize_t written = 0;
+    written += mdcgen_write(SV("))\n"), sv_slice(memory, written, memory.length)).length;
+    return sv_slice(memory, 0, written);
 }
 
 string_view_t mdcgen_Generic_func_begin(const const_string_view_t name, const string_view_t memory) {
     return mdc_sv_format("#define %.*s(T) _Generic( (*((T*)NULL)) \\\n",
-        mdc_sv_slice(memory, 0, memory.length),
+        sv_slice(memory, 0, memory.length),
         (int) name.length, name.data
     );
 }
@@ -153,7 +196,7 @@ string_view_t mdcgen_Generic_func_match(const const_string_view_t func_name, con
     ssize_t written = 0;
     for (ssize_t i = 0; i < generic_args_count; i++) {
         const const_string_view_t generic_arg = generic_args[i];
-        const const_string_view_t id_safe_arg = mdcgen_identifier_safe_typename(generic_arg, SV_BUFFER(4096)).as_const;
+        const const_string_view_t id_safe_arg = mdcgen_identifier_safe_typename(generic_arg, MDCGEN_NEW_BUFFER()).as_const;
         written += mdc_sv_format(
             ",   %.*s: %.*s_%.*s\\\n",
             mdc_sv_slice(memory, written, memory.length),
@@ -166,73 +209,125 @@ string_view_t mdcgen_Generic_func_match(const const_string_view_t func_name, con
 }
 
 string_view_t mdcgen_Generic_func_end(const string_view_t memory) {
-    return mdcgen_write(SV(")"), memory);
+    return mdcgen_write(SV(")\n"), memory);
 }
 
-struct mdc_string_view mdcgen_compile_generic_struct(const struct mdc_const_string_view generic_struct, const struct mdc_const_string_view generic_arg, const struct mdc_string_view memory) {
-    const struct mdc_const_string_view id_safe_generic = mdcgen_identifier_safe_typename(generic_arg, SV_BUFFER(4096)).as_const;
+struct mdc_string_view mdcgen_compile_generic_struct(const struct mdc_const_string_view generic_struct, const struct mdc_const_string_view generic_arg, const struct mdc_const_string_view type_arg, const struct mdc_string_view memory) {
+    const struct mdc_const_string_view id_safe_typename = mdcgen_identifier_safe_typename(type_arg, MDCGEN_NEW_BUFFER()).as_const;
     const struct mdc_const_string_view struct_tag = mdcgen_get_struct_tag(generic_struct);
     struct mdc_const_string_view compiled_generic = generic_struct;
     compiled_generic = mdc_sv_replace(compiled_generic,
         struct_tag,
-        mdc_sv_format("%.*s_%.*s", SV_BUFFER(4096),
+        mdc_sv_format("%.*s_%.*s", MDCGEN_NEW_BUFFER(),
             (int)struct_tag.length, struct_tag.data,
-            (int)id_safe_generic.length, id_safe_generic.data).as_const,
-        SV_BUFFER(4096)
+            (int)id_safe_typename.length, id_safe_typename.data).as_const,
+        MDCGEN_NEW_BUFFER()
     ).as_const;
     compiled_generic = mdc_sv_replace(compiled_generic,
-        MDC_SV("T"),
         generic_arg,
-        SV_BUFFER(4096)
+        type_arg,
+        MDCGEN_NEW_BUFFER()
     ).as_const;
     return mdc_sv_format("%.*s\n", memory, (int) compiled_generic.length, compiled_generic.data);
 }
 
-struct mdc_string_view mdcgen_compile_generic_func(const struct mdc_const_string_view generic_func, const struct mdc_const_string_view generic_arg, const struct mdc_string_view memory) {
-    const struct mdc_const_string_view id_safe_generic = mdcgen_identifier_safe_typename(generic_arg, SV_BUFFER(4096)).as_const;
+static struct mdc_string_view mdcgen_compile_generic_func(const struct mdc_const_string_view generic_func, const const_string_view_t generic_arg, const const_string_view_t type_arg, const struct mdc_string_view memory) {
+    const struct mdc_const_string_view id_safe_typename = mdcgen_identifier_safe_typename(type_arg, MDCGEN_NEW_BUFFER()).as_const;
     const struct mdc_const_string_view func_name = mdcgen_get_func_name(generic_func);
     struct mdc_const_string_view compiled_generic = generic_func;
     compiled_generic = mdc_sv_replace(compiled_generic,
         func_name,
-        mdc_sv_format("%.*s_%.*s", SV_BUFFER(4096),
+        mdc_sv_format("%.*s_%.*s", MDCGEN_NEW_BUFFER(),
             (int)func_name.length, func_name.data,
-            (int)id_safe_generic.length, id_safe_generic.data).as_const,
-        SV_BUFFER(4096)
+            (int)id_safe_typename.length, id_safe_typename.data).as_const,
+        MDCGEN_NEW_BUFFER()
     ).as_const;
     compiled_generic = mdc_sv_replace(compiled_generic,
-        MDC_SV("T"),
         generic_arg,
-        SV_BUFFER(4096)
+        type_arg,
+        MDCGEN_NEW_BUFFER()
     ).as_const;
     return mdc_sv_format("%.*s\n", memory, (int) compiled_generic.length, compiled_generic.data);
 }
 
-string_view_t mdcgen_compile_generic_structs(const const_string_view_t generic_struct, const const_string_view_t *generic_args, const ssize_t generic_args_count, const string_view_t memory) {
-    ssize_t written = 0;
-    const_string_view_t struct_tag = mdcgen_get_struct_tag(generic_struct);
-    written += mdcgen_Generic_struct_begin(struct_tag, mdc_sv_slice(memory, written, memory.length)).length;
-    written += mdcgen_Generic_struct_match(struct_tag, generic_args, generic_args_count, mdc_sv_slice(memory, written, memory.length)).length;
-    written += mdcgen_Generic_struct_end(mdc_sv_slice(memory, written, memory.length)).length;
-    for (ssize_t i = 0; i < generic_args_count; i++) {
-        const const_string_view_t generic_arg = generic_args[i];
-        written += mdcgen_compile_generic_struct(generic_struct,
-            generic_arg,
-            mdc_sv_slice(memory, written, memory.length)
-        ).length;
+static size_t mdcgen_compile_generic_structs_recurse(
+    const const_string_view_t generic_struct,
+    const const_string_view_t *generic_args, const ssize_t generic_args_count,
+    const const_string_view_t *type_args, const ssize_t type_args_count,
+    const string_view_t memory) {
+
+    const const_string_view_t generic_arg = generic_args[generic_args_count - 1];
+
+    if (generic_args_count == 1) {
+        ssize_t written = 0;
+        for (ssize_t i = 0; i < type_args_count; i++) {
+            const const_string_view_t type_arg = type_args[i];
+            written += mdcgen_compile_generic_struct(generic_struct,
+                generic_arg,
+                type_arg,
+                sv_slice(memory, written, memory.length)
+            ).length;
+        }
+        return written;
     }
+
+    ssize_t writen = 0;
+    for (ssize_t i = 0; i < type_args_count; i++) {
+        const const_string_view_t type_arg = type_args[i];
+        const const_string_view_t result = mdc_sv_clone(
+            mdcgen_compile_generic_struct(
+                generic_struct, generic_arg, type_arg, sv_slice(memory, writen, memory.length)
+            ).as_const,
+            MDCGEN_NEW_BUFFER()
+        ).as_const;
+
+        writen += mdcgen_compile_generic_structs_recurse(result,
+            generic_args, generic_args_count - 1,
+            type_args, type_args_count,
+            sv_slice(memory, writen, memory.length)
+        );
+    }
+    return writen;
+}
+
+string_view_t mdcgen_compile_generic_structs(const const_string_view_t generic_struct,
+    const const_string_view_t *generic_args, const ssize_t generic_args_count,
+    const const_string_view_t *type_args, const ssize_t type_args_count, const string_view_t memory) {
+    ssize_t written = 0;
+    const const_string_view_t struct_tag = mdcgen_get_struct_tag(generic_struct);
+    written += mdcgen_Generic_struct_begin(struct_tag, generic_args, generic_args_count, sv_slice(memory, written, memory.length)).length;
+    written += mdcgen_Generic_struct_match(struct_tag, generic_args, generic_args_count, type_args, type_args_count, mdc_sv_slice(memory, written, memory.length)).length;
+    written += mdcgen_Generic_struct_end(mdc_sv_slice(memory, written, memory.length)).length;
+
+    written += mdcgen_compile_generic_structs_recurse(generic_struct,
+        generic_args, generic_args_count,
+        type_args, type_args_count,
+        mdc_sv_slice(memory, written, memory.length)
+    );
+
     return mdc_sv_slice(memory, 0, written);
 }
 
-string_view_t mdcgen_compile_generic_funcs(const const_string_view_t generic_func, const const_string_view_t *generic_args, const ssize_t generic_args_count, const string_view_t memory) {
+string_view_t mdcgen_compile_generic_funcs(
+    const const_string_view_t generic_func,
+    const const_string_view_t *generic_args,
+    const ssize_t generic_args_count,
+    const const_string_view_t *type_args,
+    const ssize_t type_args_count,
+    const string_view_t memory)
+{
     ssize_t written = 0;
     const const_string_view_t func_name = mdcgen_get_func_name(generic_func);
     written += mdcgen_Generic_func_begin(func_name, mdc_sv_slice(memory, written, memory.length)).length;
-    written += mdcgen_Generic_func_match(func_name, generic_args, generic_args_count, mdc_sv_slice(memory, written, memory.length)).length;
+    written += mdcgen_Generic_func_match(func_name, type_args, type_args_count, mdc_sv_slice(memory, written, memory.length)).length;
     written += mdcgen_Generic_func_end(mdc_sv_slice(memory, written, memory.length)).length;
-    for (ssize_t i = 0; i < generic_args_count; i++) {
-        const const_string_view_t generic_arg = generic_args[i];
+    for (ssize_t i = 0; i < type_args_count; i++)
+    for (ssize_t j = 0; j < generic_args_count; j++) {
+        const const_string_view_t type_arg = type_args[i];
+        const const_string_view_t generic_arg = generic_args[j];
         written += mdcgen_compile_generic_func(generic_func,
             generic_arg,
+            type_arg,
             mdc_sv_slice(memory, written, memory.length)
         ).length;
     }

@@ -32,5 +32,21 @@ int main(const int argc, char **argv) {
     }
     printf("]\n");
 
+    const auto duple = (mdc_tuple2(int,int)) {
+        .t1 = 1,
+        .t2 = 2
+    };
+
+    printf("Tuple: (%d, %d)\n", duple.t1, duple.t2);
+
+
+    const auto triple = (mdc_tuple3(int,void*,int)) {
+        .t1 = 1,
+        .t2 = NULL,
+        .t3 = 3
+    };
+
+    printf("Tuple: (%d, %p, %d)\n", triple.t1, triple.t2, triple.t3);
+
     return 0;
 }

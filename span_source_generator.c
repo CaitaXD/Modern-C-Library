@@ -23,6 +23,8 @@ static const_string_view_t stdint_typenames[] = {
 #   define ARRAY_SIZE(X) (sizeof(X) / sizeof(X[0]))
 #endif
 
+#define RVALUE_ADDR(X) ((typeof(X)[1]){X})
+
 int main(const int argc, char **argv) {
 
     const_string_view_t const CONST_SPAN_T_STRUCT = SV(
@@ -67,6 +69,21 @@ int main(const int argc, char **argv) {
         "}" "\n"
     );
 
+    const_string_view_t const TUPLE2_STRUCT = SV(
+        "struct mdc_tuple2 {" "\n"
+        "   T1 t1;" "\n"
+        "   T2 t2;" "\n"
+        "};" "\n"
+    );
+
+    const_string_view_t const TUPLE3_T_STRUCT = SV(
+        "struct mdc_tuple3 {" "\n"
+        "   T1 t1;" "\n"
+        "   T2 t2;" "\n"
+        "   T3 t3;" "\n"
+        "};" "\n"
+    );
+
     const char *output_file = "mdc_span.h";
     const char *output_dir = "C:/Users/caita/CLionProjects/untitled/";
     char *fullpath = malloc(strlen(output_dir) + strlen(output_file) + 1);
@@ -74,7 +91,7 @@ int main(const int argc, char **argv) {
     strcat(fullpath, output_file);
 
     FILE *f = fopen(fullpath, "w");
-    const string_view_t buffer = SV_BUFFER(10*4096);
+    const string_view_t buffer = SV_BUFFER(100*4096);
     string_view_t window = buffer;
     string_view_t result = {};
 
@@ -90,14 +107,21 @@ int main(const int argc, char **argv) {
     result = mdcgen_write(SV("#include <stdint.h>\n"), window);
     window = sv_slice(window, result.length, buffer.length);
 
-    result = mdcgen_compile_generic_structs(CONST_SPAN_T_STRUCT, stdint_typenames, ARRAY_SIZE(stdint_typenames), window);
+    result = mdcgen_compile_generic_structs(CONST_SPAN_T_STRUCT, &SV("T"), 1, stdint_typenames, ARRAY_SIZE(stdint_typenames), window);
     window = sv_slice(window, result.length, buffer.length);
 
-    result = mdcgen_compile_generic_structs(SPAN_T_STRUCT, stdint_typenames, ARRAY_SIZE(stdint_typenames), window);
+    result = mdcgen_compile_generic_structs(SPAN_T_STRUCT, &SV("T"), 1, stdint_typenames, ARRAY_SIZE(stdint_typenames), window);
     window = sv_slice(window, result.length, buffer.length);
 
-    result = mdcgen_compile_generic_funcs(SPAN_SLICE, stdint_typenames, ARRAY_SIZE(stdint_typenames), window);
+    result = mdcgen_compile_generic_funcs(SPAN_SLICE, &SV("T"), 1, stdint_typenames, ARRAY_SIZE(stdint_typenames), window);
     window = sv_slice(window, result.length, buffer.length);
+
+    result = mdcgen_compile_generic_structs(TUPLE2_STRUCT, (const_string_view_t[]){ SV("T1"), SV("T2") }, 2, stdint_typenames, ARRAY_SIZE(stdint_typenames), window);
+    window = sv_slice(window, result.length, buffer.length);
+
+    result = mdcgen_compile_generic_structs(TUPLE3_T_STRUCT, (const_string_view_t[]){ SV("T1"), SV("T2"), SV("T3") }, 3, stdint_typenames, ARRAY_SIZE(stdint_typenames), window);
+    window = sv_slice(window, result.length, buffer.length);
+
 
     result = mdcgen_header_guard_end(SV("MDC_SPAN_G"), window);
     window = sv_slice(window, result.length, buffer.length);
